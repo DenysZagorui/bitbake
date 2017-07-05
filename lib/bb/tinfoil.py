@@ -22,6 +22,7 @@ import os
 import sys
 import atexit
 import re
+import time
 from collections import OrderedDict, defaultdict
 
 import bb.cache
@@ -444,7 +445,7 @@ class Tinfoil:
         self.run_actions(config_params)
         self.recipes_parsed = True
 
-    def run_command(self, command, *params):
+    def run_command(self, command, *params, ntries=0):
         """
         Run a command on the server (as implemented in bb.command).
         Note that there are two types of command - synchronous and
@@ -461,9 +462,22 @@ class Tinfoil:
         commandline = [command]
         if params:
             commandline.extend(params)
-        result = self.server_connection.connection.runCommand(commandline)
-        if result[1]:
-            raise TinfoilCommandFailed(result[1])
+
+        # XXX: Tinfoil commands are run by Cooker in async mode so gives
+        # some time to get done.
+        result = None
+        while True:
+            result = self.server_connection.connection.runCommand(commandline)
+            if not result[1]:
+                break
+
+            if ntries == 0:
+                raise TinfoilCommandFailed(result[1])
+            elif 'Busy' in result[1]:
+                ntries = ntries - 1
+                time.sleep(1)
+                continue
+
         return result[0]
 
     def set_event_mask(self, eventlist):
@@ -805,7 +819,7 @@ class Tinfoil:
         the tinfoil object which will ensure that it gets called.
         """
         if self.server_connection:
-            self.run_command('clientComplete')
+            self.run_command('clientComplete', ntries=1)
             _server_connections.remove(self.server_connection)
             bb.event.ui_queue = []
             self.server_connection.terminate()
